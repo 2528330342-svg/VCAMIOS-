@@ -10,71 +10,90 @@ jobs:
   build:
     name: Build iOS Tweak
     runs-on: macos-14
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        brew install ldid xz
-      timeout-minutes: 10
+      - name: Install dependencies
+        run: |
+          brew install ldid xz
+        timeout-minutes: 10
 
-    - name: Install Theos
-      run: |
-        export THEOS=~/theos
-        git clone --recursive https://github.com/theos/theos.git ~/theos
-        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-        echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
-      timeout-minutes: 10
+      - name: Install Theos
+        run: |
+          export THEOS="$HOME/theos"
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+        timeout-minutes: 10
 
-    - name: Install iOS SDK
-      run: |
-        curl -fsSL https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz -o /tmp/sdk.tar.xz
-        mkdir -p $HOME/theos/sdks
-        tar -xf /tmp/sdk.tar.xz -C $HOME/theos/sdks
-        echo "Installed SDKs:"
-        ls $HOME/theos/sdks/
-      timeout-minutes: 10
+      - name: Install iOS SDK
+        run: |
+          curl -fsSL https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz -o /tmp/sdk.tar.xz
+          mkdir -p "$THEOS/sdks"
+          tar -xf /tmp/sdk.tar.xz -C "$THEOS/sdks"
+          echo "Installed SDKs:"
+          ls "$THEOS/sdks/"
+        timeout-minutes: 10
 
-    - name: Build Tweak
-      run: |
-        export THEOS=$HOME/theos
-        export PATH=$HOME/theos/bin:$PATH
-        make clean
-        make package FINALPACKAGE=1 2>&1
-        echo "Build complete. Packages:"
-        ls -lh packages/ 2>/dev/null || echo "No packages dir"
-      timeout-minutes: 15
+      - name: Build Tweak
+        run: |
+          chmod 755 layout/DEBIAN/postinst layout/DEBIAN/postrm
+          make clean
+          make package FINALPACKAGE=1
+          echo "Build complete. Packages:"
+          ls -lh packages/
+        timeout-minutes: 15
 
-    - name: Extract dylib
-      run: |
-        mkdir -p output
-        DEB=$(ls packages/*.deb 2>/dev/null | head -1)
-        if [ -z "$DEB" ]; then
-          echo "No deb found!"
-          exit 1
-        fi
-        echo "Found: $DEB"
-        cp "$DEB" output/
-        cd output
-        ar x ../packages/*.deb 2>/dev/null || dpkg-deb -x "$DEB" .
-        # Try to find dylib in extracted contents
-        find . -name "*.dylib" -exec cp {} ./VCam.dylib \; 2>/dev/null
-        # If ar worked, try tar
-        tar -xf data.tar* 2>/dev/null && find . -name "*.dylib" -exec cp {} ./VCam.dylib \; 2>/dev/null
-        ls -lh
+      - name: Extract dylib
+        run: |
+          mkdir -p output extracted
+          DEB=$(find packages -type f -name '*.deb' -print -quit)
 
-    - name: Upload dylib
-      uses: actions/upload-artifact@v4
-      with:
-        name: VCam-dylib
-        path: output/VCam.dylib
-        retention-days: 30
+          if [ -z "$DEB" ]; then
+            echo "No deb found!"
+            exit 1
+          fi
 
-    - name: Upload deb
-      uses: actions/upload-artifact@v4
-      with:
-        name: VCam-deb
-        path: output/*.deb
-        retention-days: 30
+          cp "$DEB" output/
+          DEB_PATH="$PWD/$DEB"
+
+          (
+            cd extracted
+            ar x "$DEB_PATH"
+            DATA=$(find . -maxdepth 1 -name 'data.tar*' -print -quit)
+            if [ -z "$DATA" ]; then
+              echo "No data archive found!"
+              exit 1
+            fi
+            tar -xf "$DATA"
+          )
+
+          DYLIB=$(find extracted -type f -name 'VCam.dylib' -print -quit)
+          if [ -z "$DYLIB" ]; then
+            echo "VCam.dylib not found!"
+            exit 1
+          fi
+
+          cp "$DYLIB" output/VCam.dylib
+          cp VCam.plist output/VCam.plist
+          ls -lh output/
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: VCam-dylib
+          path: |
+            output/VCam.dylib
+            output/VCam.plist
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: VCam-deb
+          path: output/*.deb
+          if-no-files-found: error
+          retention-days: 30
