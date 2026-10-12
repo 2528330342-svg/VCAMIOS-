@@ -9,67 +9,86 @@
 // ============================================================================
 
 static BOOL g_vcamEnabled = NO;
-static UIWindow *g_overlayWindow = nil;
 static UIButton *g_floatButton = nil;
 
 // ============================================================================
 // MARK: - 悬浮按钮 UI
 // ============================================================================
 
-@interface VCamFloatButton : UIButton
-@property (nonatomic, assign) CGPoint initialCenter;
-@end
-
-@implementation VCamFloatButton
-@end
-
 static void setupFloatButton(void);
 static void handlePanGesture(UIPanGestureRecognizer *gesture);
 static void handleTapGesture(UITapGestureRecognizer *gesture);
 
+@interface VCamFloatButton : UIButton
+- (void)handlePan:(UIPanGestureRecognizer *)gesture;
+- (void)handleTap:(UITapGestureRecognizer *)gesture;
+@end
+
+@implementation VCamFloatButton
+- (void)handlePan:(UIPanGestureRecognizer *)gesture {
+    handlePanGesture(gesture);
+}
+- (void)handleTap:(UITapGestureRecognizer *)gesture {
+    handleTapGesture(gesture);
+}
+@end
+
 static void setupFloatButton() {
-    if (g_floatButton) return;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            setupFloatButton();
+        });
+        return;
+    }
 
-    CGFloat btnSize = 50;
-    CGRect screen = [UIScreen mainScreen].bounds;
+    UIWindow *hostWindow = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]] ||
+            scene.activationState != UISceneActivationStateForegroundActive) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if (window.isKeyWindow) {
+                hostWindow = window;
+                break;
+            }
+            if (!hostWindow && !window.hidden &&
+                window.windowLevel == UIWindowLevelNormal) {
+                hostWindow = window;
+            }
+        }
+        if (hostWindow) break;
+    }
 
-    g_floatButton = [VCamFloatButton buttonWithType:UIButtonTypeSystem];
-    g_floatButton.frame = CGRectMake(screen.size.width - btnSize - 15, 100, btnSize, btnSize);
-    g_floatButton.layer.cornerRadius = btnSize / 2.0;
-    g_floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
-    g_floatButton.layer.shadowOffset = CGSizeMake(0, 2);
-    g_floatButton.layer.shadowOpacity = 0.3;
-    g_floatButton.layer.shadowRadius = 4;
+    if (!hostWindow) return;
+
+    if (!g_floatButton) {
+        CGFloat btnSize = 50;
+        g_floatButton = [VCamFloatButton buttonWithType:UIButtonTypeSystem];
+        g_floatButton.frame = CGRectMake(
+            MAX(0, hostWindow.bounds.size.width - btnSize - 15),
+            MAX(100, hostWindow.safeAreaInsets.top + 15), btnSize, btnSize);
+        g_floatButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin |
+                                        UIViewAutoresizingFlexibleBottomMargin;
+        g_floatButton.layer.cornerRadius = btnSize / 2.0;
+        g_floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
+        g_floatButton.layer.shadowOffset = CGSizeMake(0, 2);
+        g_floatButton.layer.shadowOpacity = 0.3;
+        g_floatButton.layer.shadowRadius = 4;
+        [g_floatButton setTitle:@"📷" forState:UIControlStateNormal];
+        g_floatButton.titleLabel.font = [UIFont systemFontOfSize:24];
+        [g_floatButton addGestureRecognizer:[[UIPanGestureRecognizer alloc]
+            initWithTarget:g_floatButton action:@selector(handlePan:)]];
+        [g_floatButton addGestureRecognizer:[[UITapGestureRecognizer alloc]
+            initWithTarget:g_floatButton action:@selector(handleTap:)]];
+    }
+
     g_floatButton.backgroundColor = g_vcamEnabled
         ? [UIColor colorWithRed:0.2 green:0.8 blue:0.4 alpha:0.9]
         : [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:0.9];
-
-    [g_floatButton setTitle:@"📷" forState:UIControlStateNormal];
-    g_floatButton.titleLabel.font = [UIFont systemFontOfSize:24];
-
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-        initWithTarget:g_floatButton action:@selector(handlePan:)];
-    [g_floatButton addGestureRecognizer:pan];
-
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
-        initWithTarget:g_floatButton action:@selector(handleTap:)];
-    [g_floatButton addGestureRecognizer:tap];
-
-    g_overlayWindow = [[UIWindow alloc] initWithFrame:screen];
-    g_overlayWindow.windowLevel = UIWindowLevelAlert + 100;
-    g_overlayWindow.hidden = NO;
-    g_overlayWindow.backgroundColor = [UIColor clearColor];
-
-    UIViewController *rootVC = [[UIViewController alloc] init];
-    rootVC.view.backgroundColor = [UIColor clearColor];
-    [rootVC.view addSubview:g_floatButton];
-    g_overlayWindow.rootViewController = rootVC;
-
-    // Register selectors on the button class
-    class_addMethod([g_floatButton class], @selector(handlePan:),
-                    (IMP)handlePanGesture, "v@:@");
-    class_addMethod([g_floatButton class], @selector(handleTap:),
-                    (IMP)handleTapGesture, "v@:@");
+    if (g_floatButton.superview != hostWindow) {
+        [g_floatButton removeFromSuperview];
+        [hostWindow addSubview:g_floatButton];
+    }
+    [hostWindow bringSubviewToFront:g_floatButton];
 }
 
 static void handlePanGesture(UIPanGestureRecognizer *gesture) {
@@ -257,18 +276,31 @@ static void handleTapGesture(UITapGestureRecognizer *gesture) {
 
 %ctor {
     @autoreleasepool {
-        g_pickerDelegate = [[VCamImagePickerControllerDelegate alloc] init];
-
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
         if (![bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(VCamHooks);
         }
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-            dispatch_get_main_queue(), ^{
-                @autoreleasepool {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_pickerDelegate = [[VCamImagePickerControllerDelegate alloc] init];
+            [[NSNotificationCenter defaultCenter]
+                addObserverForName:UIApplicationDidBecomeActiveNotification
+                object:nil queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *notification) {
                     setupFloatButton();
-                }
-            });
+                }];
+            [[NSNotificationCenter defaultCenter]
+                addObserverForName:UISceneDidActivateNotification
+                object:nil queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *notification) {
+                    setupFloatButton();
+                }];
+            setupFloatButton();
+            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES
+                block:^(NSTimer *timer) {
+                    setupFloatButton();
+                }];
+        });
     }
 }
+
