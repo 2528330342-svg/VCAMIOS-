@@ -1,18 +1,22 @@
 ARCHS = arm64 arm64e
 TARGET := iphone:clang:latest:14.0
+INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-BUNDLE_NAME = VCamSettings
+TWEAK_NAME = VCam
 
-VCamSettings_FILES = VCamRootListController.m
-VCamSettings_INSTALL_PATH = /Library/PreferenceBundles
-VCamSettings_FRAMEWORKS = UIKit
-VCamSettings_PRIVATE_FRAMEWORKS = Preferences
-VCamSettings_CFLAGS = -fobjc-arc
+VCam_FILES = Tweak.xm MediaManager.m
+VCam_CFLAGS = -fobjc-arc
+VCam_CXXFLAGS = -fobjc-arc -std=c++17
+VCam_LDFLAGS = -std=c++17
+VCam_FRAMEWORKS = UIKit AVFoundation CoreMedia CoreVideo CoreImage MobileCoreServices
+VCam_PRIVATE_FRAMEWORKS = 
 
-include $(THEOS_MAKE_PATH)/bundle.mk
+include $(THEOS_MAKE_PATH)/tweak.mk
 
-internal-stage::
-	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences$(ECHO_END)
-	$(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/VCam.plist$(ECHO_END)
+# SUBPROJECTS += vcamsettings  # Disabled: Preferences.framework not in iOS 16.5 SDK
+# include $(THEOS_MAKE_PATH)/aggregate.mk
+
+after-install::
+	install.exec "killall -9 SpringBoard"
